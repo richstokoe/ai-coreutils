@@ -1,0 +1,9 @@
+﻿<Project>
+
+  <PropertyGroup>
+    <OutputPath>$(MSBuildThisFileDirectory)Output\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+</Project>
