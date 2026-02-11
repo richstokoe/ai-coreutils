@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AiCoreUtils.Common;
-using Microsoft.Agents.AI;
+using AiCoreUtils.Common.Tools;
+using Microsoft.Extensions.AI;
 
 try
 {
@@ -11,27 +13,101 @@ try
         return 1;
     }
 
-    var instruction = string.Join(' ', args);
     var cwd = Directory.GetCurrentDirectory();
     var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    var instruction = string.Join(' ', args);
 
-    // Enumerate files in the current directory tree
-    const int maxDepth = 5;
-    const int maxFiles = 2000;
+    // --- Step 1: Extract filesystem paths from args ---
+
+    var pathTokens = new List<(string Original, string Resolved, PathKind Kind)>();
+    var nonPathTokens = new List<string>();
+
+    foreach (var arg in args)
+    {
+        if (arg.StartsWith('/') || arg.StartsWith("~/") || arg.StartsWith("./") || arg.StartsWith("../"))
+        {
+            var expanded = arg.StartsWith("~/")
+                ? Path.Combine(homeDir, arg[2..])
+                : arg;
+            var resolved = Path.GetFullPath(expanded, cwd);
+
+            if (File.Exists(resolved))
+                pathTokens.Add((arg, resolved, PathKind.File));
+            else if (Directory.Exists(resolved))
+                pathTokens.Add((arg, resolved, PathKind.Directory));
+            else
+                nonPathTokens.Add(arg);
+        }
+        else
+        {
+            nonPathTokens.Add(arg);
+        }
+    }
+
+    // Secondary scan: find paths embedded in natural language (e.g. "all PDFs in ~/Documents")
+    var pathPattern = new Regex(@"(?:~/|/)[^\s""']+");
+    foreach (Match match in pathPattern.Matches(instruction))
+    {
+        var token = match.Value;
+        var expanded = token.StartsWith("~/")
+            ? Path.Combine(homeDir, token[2..])
+            : token;
+        var resolved = Path.GetFullPath(expanded, cwd);
+
+        if (pathTokens.Any(p => p.Resolved == resolved))
+            continue;
+
+        if (Directory.Exists(resolved))
+            pathTokens.Add((token, resolved, PathKind.Directory));
+        else if (File.Exists(resolved))
+            pathTokens.Add((token, resolved, PathKind.File));
+    }
+
+    // --- Step 2: Choose enumeration mode ---
+
+    var explicitFiles = pathTokens.Where(p => p.Kind == PathKind.File).ToList();
+    var explicitDirs = pathTokens.Where(p => p.Kind == PathKind.Directory).ToList();
 
     var files = new List<string>();
-    EnumerateFiles(cwd, cwd, maxDepth, maxFiles, files);
+    bool truncated = false;
+    const int maxFiles = 200;
+    const int maxDepth = 2;
+
+    if (explicitFiles.Count > 0 && nonPathTokens.Count == 0)
+    {
+        // Mode A: Pure explicit paths (e.g. "aicp ~/Documents/file.txt /tmp/")
+        // No enumeration needed -- source files are explicitly named.
+        foreach (var f in explicitFiles)
+            files.Add(f.Resolved);
+    }
+    else if (explicitDirs.Count > 0)
+    {
+        // Mode B: Directory reference (e.g. "aicp 'all PDFs in ~/Documents to /tmp'")
+        // Enumerate the referenced directory, not cwd.
+        foreach (var d in explicitDirs)
+        {
+            EnumerateFiles(d.Resolved, d.Resolved, maxDepth, maxFiles - files.Count, files);
+        }
+        truncated = files.Count >= maxFiles;
+    }
+    else
+    {
+        // Mode C: Pure natural language (e.g. "aicp 'move the ls manpage to temp'")
+        // Enumerate cwd with conservative limits.
+        EnumerateFiles(cwd, cwd, maxDepth, maxFiles, files);
+        truncated = files.Count >= maxFiles;
+    }
 
     if (files.Count == 0)
     {
-        Console.Error.WriteLine("No files found in the current directory.");
+        Console.Error.WriteLine("No files found matching the instruction.");
         return 1;
     }
 
-    var fileListing = string.Join('\n', files);
-    var truncated = files.Count >= maxFiles;
+    // --- Step 3: Call the LLM ---
 
-    // Ask the LLM to plan the copy operations
+    var tools = new[] { AIFunctionFactory.Create(DirectoryListTool.ListDirectory) };
+
     var agent = await AgentFactory.CreateAgentAsync(
         instructions: """
             You are a file copy planner. You receive a natural language description of some files
@@ -39,19 +115,22 @@ try
             'copy all the PDFs in this directory to the home directory', which is the
             equivalent of running 'cp *.pdf ~/' on a Unix/MacOS/Linux machine.
 
+            You have a ListDirectory tool available. Use it to inspect directories when you
+            need to find files by date, size, or other attributes not in the basic file listing.
+
             You will value data integrity and safety above all else. If the request is too
             ambiguous, you must reject the request with an ACTIONABLE message for how
-            the user can make a less ambiguous request. 
+            the user can make a less ambiguous request.
 
             You must also protect the integrity of the system. Refuse to copy files that
             may result in the system not working. For example, don't copy a text file over
-            the boot image in /boot. 
+            the boot image in /boot.
 
             You must respond with ONLY a JSON array of copy operations. No markdown fencing,
             no explanation, no other text. Just the raw JSON array.
 
             Each element must be an object with exactly two string properties:
-            - "source": the relative path of the file to copy (must exist in the file listing)
+            - "source": the path of the file to copy, exactly as shown in the file listing
             - "destination": the full absolute path where the file should be copied to
 
             Rules:
@@ -62,12 +141,14 @@ try
             - If no files match the instruction, return an empty array: []
             - Never invent files that are not in the listing.
             """,
-        name: "FileCopyPlanner");
+        name: "FileCopyPlanner",
+        tools: tools);
 
+    var fileListing = string.Join('\n', files);
     var prompt = $"""
         Current directory: {cwd}
         Home directory: {homeDir}
-        {(truncated ? $"File listing (truncated to first {maxFiles} files):" : "File listing:")}
+        {(truncated ? $"File listing (truncated to first {files.Count} entries):" : "File listing:")}
         {fileListing}
 
         Instruction: {instruction}
@@ -84,7 +165,8 @@ try
             lines.Where(l => !l.TrimStart().StartsWith("```")));
     }
 
-    // Parse the copy plan
+    // --- Step 4: Parse the copy plan ---
+
     List<CopyOperation>? operations;
     try
     {
@@ -104,17 +186,27 @@ try
         return 0;
     }
 
-    // Validate sources and build the resolved plan
+    // --- Step 5: Validate and display plan ---
+
     var resolvedOps = new List<(string Source, string Destination)>();
     foreach (var op in operations)
     {
-        var fullSource = Path.GetFullPath(op.Source, cwd);
+        var fullSource = Path.IsPathRooted(op.Source)
+            ? op.Source
+            : Path.GetFullPath(op.Source, cwd);
+
         if (!File.Exists(fullSource))
         {
             Console.Error.WriteLine($"Warning: source file does not exist, skipping: {op.Source}");
             continue;
         }
-        resolvedOps.Add((fullSource, op.Destination));
+
+        // If the LLM returned a directory as the destination, append the filename
+        var dest = Directory.Exists(op.Destination)
+            ? Path.Combine(op.Destination, Path.GetFileName(fullSource))
+            : op.Destination;
+
+        resolvedOps.Add((fullSource, dest));
     }
 
     if (resolvedOps.Count == 0)
@@ -123,16 +215,16 @@ try
         return 0;
     }
 
-    // Display the plan
     Console.WriteLine($"Planned copies ({resolvedOps.Count} file(s)):");
     Console.WriteLine();
     foreach (var (src, dst) in resolvedOps)
     {
-        Console.WriteLine($"  {Path.GetRelativePath(cwd, src)} -> {dst}");
+        Console.WriteLine($"  {src} -> {dst}");
     }
     Console.WriteLine();
 
-    // Confirm
+    // --- Step 6: Confirm ---
+
     Console.Write("Proceed? [y/N] ");
     var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
     if (answer is not "y" and not "yes")
@@ -141,7 +233,8 @@ try
         return 0;
     }
 
-    // Execute copies
+    // --- Step 7: Execute copies ---
+
     var copied = 0;
     var failed = 0;
 
@@ -154,12 +247,12 @@ try
                 Directory.CreateDirectory(destDir);
 
             File.Copy(src, dst, overwrite: false);
-            Console.WriteLine($"  Copied: {Path.GetRelativePath(cwd, src)} -> {dst}");
+            Console.WriteLine($"  Copied: {src} -> {dst}");
             copied++;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"  Failed: {Path.GetRelativePath(cwd, src)} -> {dst}: {ex.Message}");
+            Console.Error.WriteLine($"  Failed: {src} -> {dst}: {ex.Message}");
             failed++;
         }
     }
@@ -184,7 +277,7 @@ static void EnumerateFiles(string root, string current, int remainingDepth, int 
         foreach (var file in Directory.EnumerateFiles(current))
         {
             if (results.Count >= maxFiles) return;
-            results.Add(Path.GetRelativePath(root, file));
+            results.Add(file);
         }
 
         foreach (var dir in Directory.EnumerateDirectories(current))
@@ -200,3 +293,5 @@ static void EnumerateFiles(string root, string current, int remainingDepth, int 
 }
 
 record CopyOperation(string Source, string Destination);
+
+enum PathKind { File, Directory }

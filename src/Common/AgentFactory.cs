@@ -12,7 +12,8 @@ public static class AgentFactory
 {
     private static readonly HttpClient Http = new();
 
-    public static async Task<AIAgent> CreateAgentAsync(string instructions, string name)
+    public static async Task<AIAgent> CreateAgentAsync(string instructions, string name,
+        IEnumerable<AITool>? tools = null)
     {
         var endpoint = ConfigManager.GetEndpoint();
         var model = ConfigManager.GetModel();
@@ -25,7 +26,9 @@ public static class AgentFactory
             .GetChatClient(model)
             .AsIChatClient();
 
-        return chatClient.AsAIAgent(instructions: instructions, name: name);
+        return tools is not null
+            ? chatClient.AsAIAgent(instructions: instructions, name: name, tools: [..tools])
+            : chatClient.AsAIAgent(instructions: instructions, name: name);
     }
 
     private static async Task EnsureModelLoadedAsync(string endpoint, string model)

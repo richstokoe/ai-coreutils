@@ -31,11 +31,12 @@ Produces a concise summary scaled to the complexity of the input. Streams to std
 Natural-language file copy. Describe what you want to copy in plain English and the LLM figures out the rest.
 
 ```
+aicp ~/Documents/report.pdf /tmp/
 aicp "all PDFs in this folder to ~/Documents"
-aicp "the README to /tmp"
+aicp "copy the newest file from ~/AppImages to /tmp"
 ```
 
-The tool scans the current directory tree, sends the file listing to the LLM, shows you a plan of what will be copied, and asks for confirmation before executing.
+Supports explicit paths (like `cp`), natural language, or a mix of both. The agent has access to a `ListDirectory` tool so it can inspect directories to find files by date, size, or other attributes. All operations are shown as a plan and require confirmation before executing.
 
 ### remindme
 
@@ -106,6 +107,7 @@ ai-coreutils/
   ai-coreutils.sln
   src/
     Common/                   # Shared library: AgentFactory, ConfigManager, ModelService
+      Tools/                  # Agent tools (DirectoryListTool, etc.)
     Llm/                      # llm binary
     Summarise/                # summarise binary
     AiCp/                     # aicp binary
@@ -126,3 +128,5 @@ All utilities go through `AgentFactory.CreateAgentAsync()`, which:
 4. Creates an OpenAI-compatible chat client wrapped as a `Microsoft.Agents.AI.AIAgent`
 
 Each tool then provides its own system prompt and calls the agent with user input, either streaming the response directly (`llm`, `summarise`) or parsing structured output from the LLM to take action (`aicp`, `remindme`).
+
+Agents can optionally be given tools (via `Microsoft.Extensions.AI.AIFunctionFactory`) that the LLM can invoke during execution. For example, `aicp` exposes a `DirectoryListTool` that lets the agent run `ls` (Linux/macOS) or `dir` (Windows) to inspect directory contents by date, size, or name.
