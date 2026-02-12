@@ -48,6 +48,19 @@ Supports explicit paths (like `cp`), natural language, or a mix of both. The age
 
 ![aicp example](docs/images/aicp.png)
 
+### ails
+
+Natural-language directory listing. Describe what you want to see and the LLM translates it into the correct `ls` flags.
+
+```
+ails
+ails "show all files sorted by size, human readable"
+ails "wide listing of /tmp"
+ails "hidden files sorted by modification time"
+```
+
+Running `ails` with no arguments lists the current directory. Uses the `DirectoryListTool` agent tool under the hood.
+
 ### remindme
 
 Schedule a desktop notification using natural language for the time.
@@ -124,9 +137,12 @@ ai-coreutils/
   src/
     Common/                   # Shared library: AgentFactory, ConfigManager, ModelService
       Tools/                  # Agent tools (DirectoryListTool, etc.)
+        Utils/                # Utility tools (DateTime, Math, Network, etc.)
+        Web/                  # Web tools (RSS feeds, web search, etc.)
     Llm/                      # llm binary
     Summarise/                # summarise binary
     AiCp/                     # aicp binary
+    AiLs/                     # ails binary
     RemindMe/                 # remindme binary
     ListModels/               # list-models binary
     SelectModel/              # select-model binary
