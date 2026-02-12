@@ -59,6 +59,8 @@ remindme "tomorrow at 9am" "Stand-up meeting"
 
 Uses the LLM to parse the time expression, then schedules a `notify-send` notification via `systemd-run`. Linux only.
 
+![remindme example](docs/images/remindme.png)
+
 ### list-models
 
 List all models available on the configured endpoint.
