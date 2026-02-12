@@ -16,15 +16,23 @@ llm "Explain the difference between TCP and UDP in two sentences"
 
 Streams the response to stdout.
 
+![llm example](docs/images/llm.png)
+
 ### summarise
 
-Summarise the contents of a text file.
+Summarise the contents of a text file or piped input.
 
 ```
 summarise meeting-notes.txt
+llm "Explain quantum physics to me" | summarise
+cat article.txt | summarise
 ```
 
-Produces a concise summary scaled to the complexity of the input. Streams to stdout.
+Accepts a file path or reads from stdin when piped. Produces a concise summary scaled to the complexity of the input. Streams to stdout.
+
+![summarise a text file](docs/images/summarise-text-file.png)
+
+![llm piped to summarise](docs/images/llm-summarise.png)
 
 ### aicp
 
@@ -37,6 +45,8 @@ aicp "copy the newest file from ~/AppImages to /tmp"
 ```
 
 Supports explicit paths (like `cp`), natural language, or a mix of both. The agent has access to a `ListDirectory` tool so it can inspect directories to find files by date, size, or other attributes. All operations are shown as a plan and require confirmation before executing.
+
+![aicp example](docs/images/aicp.png)
 
 ### remindme
 
@@ -57,6 +67,8 @@ List all models available on the configured endpoint.
 list-models
 ```
 
+![list-models example](docs/images/list-models.png)
+
 ### select-model
 
 Choose which model to use by number (from `list-models` output).
@@ -66,6 +78,8 @@ select-model 3
 ```
 
 Persists the selection to `~/.ai-coreutils/config.json`.
+
+![select-model example](docs/images/select-model.png)
 
 ## Configuration
 

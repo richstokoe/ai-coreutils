@@ -3,25 +3,34 @@ using Microsoft.Agents.AI;
 
 try
 {
-    if (args.Length == 0)
+    string content;
+
+    if (Console.IsInputRedirected)
+    {
+        content = await Console.In.ReadToEndAsync();
+    }
+    else if (args.Length > 0)
+    {
+        var filePath = Path.GetFullPath(args[0]);
+
+        if (!File.Exists(filePath))
+        {
+            Console.Error.WriteLine($"File not found: {filePath}");
+            return 1;
+        }
+
+        content = await File.ReadAllTextAsync(filePath);
+    }
+    else
     {
         Console.Error.WriteLine("Usage: summarise <path-to-text-file>");
+        Console.Error.WriteLine("       command | summarise");
         return 1;
     }
-
-    var filePath = Path.GetFullPath(args[0]);
-
-    if (!File.Exists(filePath))
-    {
-        Console.Error.WriteLine($"File not found: {filePath}");
-        return 1;
-    }
-
-    var content = await File.ReadAllTextAsync(filePath);
 
     if (string.IsNullOrWhiteSpace(content))
     {
-        Console.Error.WriteLine("File is empty.");
+        Console.Error.WriteLine("No input to summarise.");
         return 1;
     }
 
